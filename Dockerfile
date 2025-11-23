@@ -1,15 +1,4 @@
-FROM python:3.11-slim
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        gcc \
-        g++ \
-        libc-dev \
-        libffi-dev \
-        libpq-dev \
-        build-essential \
-    rm -rf /var/lib/apt/lists/*
-
+FROM python:3.10-slim
 
 WORKDIR /app
 COPY requirements.txt .
