@@ -116,7 +116,7 @@ class Wallet:
             if not token:
                 logger.warning(f"Failed to acquire locks for transfer {from_user} → {to_user}")
                 raise WalletError("Failed to acquire lock for transfer")
-
+            logger.info(f"redis instnace is --------- {self.redis}------------------------")
             try:
                 from_balance, to_balance = await self._load_wallets(from_user, to_user)
 
@@ -126,8 +126,8 @@ class Wallet:
                     )
 
                 pipe = self.redis.pipeline(transaction=True)
-                await pipe.hset(self._wallet_key(from_user), "balance", str(from_balance - amount))
-                await pipe.hset(self._wallet_key(to_user), "balance", str(to_balance + amount))
+                pipe.hset(self._wallet_key(from_user), "balance", str(from_balance - amount))
+                pipe.hset(self._wallet_key(to_user), "balance", str(to_balance + amount))
                 await pipe.execute()
 
                 logger.info(

@@ -6,6 +6,8 @@ from aiokafka.admin import NewTopic, AIOKafkaAdminClient
 from aiokafka.errors import TopicAlreadyExistsError
 from faststream.kafka import KafkaBroker
 from faststream import FastStream, Depends
+
+from redis_module.redis_seeder import seed_redis
 from wallet.wallet_transfer import Wallet
 from wallet.wallet_exceptions import WalletNotFoundError, InsufficientFundsError, SameUserTransferError
 from wallet.dto import TransferCompleted, TransferRequested
@@ -71,7 +73,8 @@ async def get_redis() -> aioredis.Redis:
     """
     global redis_client
     if redis_client is None:
-        raise RuntimeError("Redis client not initialized. Check startup hook.")
+        # TODO: Find A Way To Better Instanstiate Redis Client
+        return aioredis.from_url("redis://localhost:6379/0", decode_responses=True)
     return redis_client
 
 
@@ -98,6 +101,7 @@ async def startup():
         )
         await redis_client.ping()
         logger.info("✓ Redis connected")
+        await seed_redis()
 
     except Exception as e:
         logger.error(f"❌ Failed to initialize Redis: {e}")
@@ -113,7 +117,7 @@ async def shutdown():
         logger.info("Redis disconnected")
 
 
-@kafka_broker.subscriber(TRANSFER_REQUEST_TOPIC, auto_commit=True)
+@kafka_broker.subscriber(TRANSFER_REQUEST_TOPIC)
 @kafka_broker.publisher(TRANSFER_COMPLETED_TOPIC)
 async def handle_transfer(
         request: TransferRequested,
@@ -132,24 +136,23 @@ async def handle_transfer(
             f"🔄 Processing transfer: {request.from_user} → {request.to_user} | "
             f"Amount: {request.amount} {request.currency} | ID: {request.transfer_id}"
         )
-
         success = await wallet.transfer(
             from_user=request.from_user,
             to_user=request.to_user,
             amount=request.amount,
-            operation_id=request.idempotency_key
+            operation_id=request.idempotency_key,
         )
-
         completion = TransferCompleted(
             transfer_id=request.transfer_id,
             status="COMPLETED" if success else "FAILED",
-            processed_at=datetime.utcnow().timestamp(),
+            processed_at=datetime.now().timestamp(),
             from_user=request.from_user,
             to_user=request.to_user,
             amount=request.amount,
             currency=request.currency
         )
-
+        from_user = await wallet.redis.hget(f"wallet:{request.from_user}", "balance")
+        to_user = await wallet.redis.hget(f"wallet:{request.to_user}", "balance")
         status_emoji = "✅" if success else "❌"
         logger.info(f"{status_emoji} Transfer {request.transfer_id}: {completion.status}")
 
