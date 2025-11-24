@@ -92,7 +92,7 @@ async def startup():
 
     try:
         redis_client = aioredis.from_url(
-            "redis_module://localhost:6379",
+            "redis://localhost:6379/0",
             decode_responses=True,
             encoding="utf8"
         )
