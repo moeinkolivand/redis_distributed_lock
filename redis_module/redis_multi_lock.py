@@ -3,7 +3,7 @@ import random
 import uuid
 from typing import Optional, Tuple
 from contextlib import asynccontextmanager
-import redis_module.asyncio as aioredis
+import redis.asyncio as aioredis
 import logging
 
 logger = logging.getLogger(__name__)
