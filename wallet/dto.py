@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from decimal import Decimal
 from typing import Literal
 
@@ -8,12 +8,7 @@ class TransferRequested(BaseModel):
     to_user: str = Field(..., min_length=1, pattern=r"^[A-Za-z0-9_-]+$")
     amount: Decimal = Field(..., gt=0, decimal_places=2, max_digits=18)
     currency: Literal["USD", "EUR", "GBP"] = Field(default="USD")
-    idempotency_key: str = Field(default_factory=lambda: "")
-
-    @field_validator("idempotency_key", mode="before")
-    @classmethod
-    def default_idempotency_key(cls, v, info):
-        return v or info.data.get("transfer_id", "")
+    idempotency_key: str | None = None  # ← important: None means "missing"
 
     @field_validator("amount", mode="before")
     @classmethod
@@ -22,6 +17,11 @@ class TransferRequested(BaseModel):
             return Decimal(str(v))
         return v
 
+    @model_validator(mode="after")
+    def set_default_idempotency_key(self):
+        if not self.idempotency_key:  # None, "", etc.
+            self.idempotency_key = self.transfer_id
+        return self
 
 class TransferCompleted(BaseModel):
     transfer_id: str
