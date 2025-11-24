@@ -1,6 +1,6 @@
 import asyncio
 from typing import Optional
-import redis_module.asyncio as aioredis
+import redis.asyncio as aioredis
 import json
 from custom_types import User, Wallet
 import random
@@ -10,7 +10,7 @@ from datetime import datetime
 class RedisSeeder:
     """Idempotent Redis seeder — never overwrites existing keys."""
 
-    def __init__(self, redis_url: str = "redis_module://localhost:6379/0"):
+    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
         self.redis_url = redis_url
         self.redis: Optional[aioredis.Redis] = None
 
@@ -146,9 +146,9 @@ class RedisSeeder:
         await self.seed_wallets(wallets)
 
 
-async def seed_redis(user_count: int = 10, clear_first: bool = False):
+async def seed_redis(user_count: int = 10, clear_first: bool = False, redis_url: str = "redis://localhost:6379/0"):
     """Quick function to seed Redis with users and wallets."""
-    seeder = RedisSeeder()
+    seeder = RedisSeeder(redis_url)
     try:
         await seeder.seed_all(user_count=user_count, clear_first=clear_first)
     finally:
