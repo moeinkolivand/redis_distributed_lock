@@ -28,16 +28,13 @@ class Wallet:
             max_retries=lock_max_retries
         )
 
-    @staticmethod
-    def _wallet_key(user_id: str) -> str:
+    def _wallet_key(self, user_id: str) -> str:
         return f"wallet:{user_id}"
 
-    @staticmethod
-    def _balance_key(user_id: str) -> str:
-        return f"{Wallet._wallet_key(user_id)}:balance"
+    def _balance_key(self, user_id: str) -> str:
+        return f"{self._wallet_key(user_id)}:balance"
 
-    @staticmethod
-    def _precision(value: float | Decimal) -> Decimal:
+    def _precision(self, value: float | Decimal) -> Decimal:
         """Ensure 2 decimal precision using banker's rounding."""
         return Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
@@ -79,7 +76,6 @@ class Wallet:
     ) -> tuple[Decimal, Decimal]:
         from_wallet_key = self._wallet_key(from_user)
         to_wallet_key = self._wallet_key(to_user)
-
         from_balance_str = await self.redis.hget(from_wallet_key, "balance")
         to_balance_str = await self.redis.hget(to_wallet_key, "balance")
 
@@ -130,8 +126,8 @@ class Wallet:
                     )
 
                 pipe = self.redis.pipeline(transaction=True)
-                await pipe.set(self._balance_key(from_user), str(from_balance - amount))
-                await pipe.set(self._balance_key(to_user), str(to_balance + amount))
+                await pipe.hset(self._wallet_key(from_user), "balance", str(from_balance - amount))
+                await pipe.hset(self._wallet_key(to_user), "balance", str(to_balance + amount))
                 await pipe.execute()
 
                 logger.info(
