@@ -27,6 +27,7 @@ class Wallet:
             retry_delay_ms=lock_retry_delay_ms,
             max_retries=lock_max_retries
         )
+        self.lock_ttl_ms: int = lock_ttl_ms
 
     def _wallet_key(self, user_id: str) -> str:
         return f"wallet:{user_id}"
@@ -116,34 +117,75 @@ class Wallet:
             if not token:
                 logger.warning(f"Failed to acquire locks for transfer {from_user} → {to_user}")
                 raise WalletError("Failed to acquire lock for transfer")
-            logger.info(f"redis instnace is --------- {self.redis}------------------------")
             try:
+                status = await self._check_idempotency(operation_id)
+                if status is True:
+                    yield False
+                    return
+                elif status is False:
+                    yield False
+                    return
                 from_balance, to_balance = await self._load_wallets(from_user, to_user)
 
                 if from_balance < amount:
                     raise InsufficientFundsError(
                         f"Insufficient funds: {from_user} has {from_balance}, needs {amount}"
                     )
-
+                await self.redis.set(self._idempotency_key(operation_id), str(amount), nx=True, px=self.lock_ttl_ms + 5000)
                 pipe = self.redis.pipeline(transaction=True)
                 pipe.hset(self._wallet_key(from_user), "balance", str(from_balance - amount))
                 pipe.hset(self._wallet_key(to_user), "balance", str(to_balance + amount))
                 await pipe.execute()
-
+                await self.redis.set(
+                    self._idempotency_key(operation_id),
+                    "success",
+                    px=self.lock_ttl_ms + 5000
+                )
                 logger.info(
                     f"Transfer SUCCESS: {from_user} → {to_user} | Amount: {amount} | "
                     f"From: {from_balance} → {from_balance - amount} | "
                     f"To: {to_balance} → {to_balance + amount} | OpID: {operation_id or token[:8]}"
                 )
-
                 yield True
 
             except Exception as e:
                 logger.error(f"Transfer FAILED: {from_user} → {to_user} | Error: {e}")
+                await self.redis.set(
+                    self._idempotency_key(operation_id),
+                    "failed",
+                    px=self.lock_ttl_ms + 5000
+                )
                 yield False
                 raise
             finally:
                 pass
+
+    def _idempotency_key(self, operation_id: str) -> str:
+        """Create idempotency tracking key."""
+        return f"transfer:idempotency:{operation_id}"
+
+    async def _check_idempotency(self, operation_id: str) -> Optional[bool]:
+        """
+        Returns:
+            True  → already processed successfully
+            False → already processed but failed
+            None  → not processed yet
+        """
+        if not operation_id:
+            return None
+
+        status = await self.redis.get(self._idempotency_key(operation_id))
+
+        if status is None:
+            return None
+
+        if status == b"success":
+            return True
+
+        if status == b"failed":
+            return False
+
+        return True
 
     async def transfer(
             self,
@@ -156,6 +198,7 @@ class Wallet:
         Perform a safe money transfer.
         Returns True if transfer succeeded, False if lock failed or other error.
         """
+
         try:
             async with self.transfer_context(from_user, to_user, amount, operation_id) as success:
                 return success
