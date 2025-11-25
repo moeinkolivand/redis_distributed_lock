@@ -1,17 +1,16 @@
+import asyncio
+
 import pytest
 from decimal import Decimal
-
 from faststream.kafka import TestKafkaBroker
-
-from main import kafka_broker, TRANSFER_REQUEST_TOPIC, app
-from wallet.dto import TransferRequested, TransferCompleted
+from main import kafka_broker, TRANSFER_REQUEST_TOPIC
+from wallet.dto import TransferRequested
 from wallet.wallet_transfer import Wallet
 import redis.asyncio as aioredis
-from redis_module.redis_seeder import seed_redis
-
-
 # from wallet.wallet_exceptions import InsufficientFundsError, WalletNotFoundError, SameUserTransferError
+import logging
 
+logger = logging.getLogger(__name__)
 def user_factory(user_id="user_1"):
     return {
         "user_id": user_id,
@@ -48,7 +47,7 @@ WALLET_TWO = f"wallet:{USER_TWO}"
 @pytest.fixture
 async def mock_redis():
     """Mock Redis client for testing."""
-    url = "redis://localhost:6379/0"
+    url = "redis://localhost:6379/1"
     client = await aioredis.from_url(
         url,
         encoding="utf-8",
@@ -187,9 +186,9 @@ class TestWalletTransferLogic:
         amount = Decimal("50.00")
         balance_user_one_before = await get_balance_user(mock_redis, USER_ONE)
         balance_user_two_before = await get_balance_user(mock_redis, USER_TWO)
-        print(balance_user_one_before)
-        print(balance_user_two_before)
-        async with TestKafkaBroker(kafka_broker, with_real=True) as br:
+        logger.info("Balance user1 before: %s", balance_user_one_before)
+        logger.info("Balance user2 before: %s", balance_user_two_before)
+        async with TestKafkaBroker(kafka_broker) as br:
             request = TransferRequested(
                 transfer_id="tx_test_123",
                 from_user=USER_ONE,
@@ -203,13 +202,126 @@ class TestWalletTransferLogic:
                 message=request.model_dump(),
                 topic=TRANSFER_REQUEST_TOPIC,
             )
-            print(await get_balance_user(mock_redis, USER_ONE))
-            print(await get_balance_user(mock_redis, USER_TWO))
+            balance_user_one_after = await get_balance_user(mock_redis, USER_ONE)
+            balance_user_two_after = await get_balance_user(mock_redis, USER_TWO)
+            logger.info("Balance user1 after: %s", balance_user_one_after)
+            logger.info("Balance user2 after: %s", balance_user_two_after)
             assert str(Decimal(balance_user_one_before) - amount) == await get_balance_user(mock_redis, USER_ONE)
             assert await get_balance_user(mock_redis, USER_TWO) == str(Decimal(balance_user_two_before) + amount)
 
 
+    @pytest.mark.asyncio
+    async def test_handle_transfer_failure(self, mock_redis):
+        """Test failed transfer handling through Kafka."""
+        async with TestKafkaBroker(kafka_broker) as br:
+            amount = Decimal("10000.00")
+            balance_user_one_before = await get_balance_user(mock_redis, USER_ONE)
+            logger.info("Balance user1 before: %s", balance_user_one_before)
+            async with TestKafkaBroker(kafka_broker) as br:
+                request = TransferRequested(
+                    transfer_id="tx_test_12345",
+                    from_user=USER_ONE,
+                    to_user=USER_TWO,
+                    amount=amount * Decimal(1000),
+                    currency="USD",
+                    idempotency_key="test_key_12345"
+                )
+                await br.publish(
+                    message=request.model_dump(),
+                    topic=TRANSFER_REQUEST_TOPIC,
+                )
+                balance_user_one_after = await get_balance_user(mock_redis, USER_ONE)
+                logger.info("Balance user1 after: %s", balance_user_one_after)
+                assert balance_user_one_before == balance_user_one_after
 
+
+class TestRaceConditions:
+    """Test race condition scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_transfers_same_sender(self, mock_wallet, mock_redis):
+        """Test multiple concurrent transfers from same sender."""
+        initial_balance_user_one = Decimal(await get_balance_user(mock_redis, USER_ONE))
+        initial_balance_user_two = Decimal(await get_balance_user(mock_redis, USER_TWO))
+        transfer_count = 5
+        transfer_amount = Decimal("30.00")
+
+        async with TestKafkaBroker(kafka_broker) as br:
+            for i in range(transfer_count):
+                request = TransferRequested(
+                    transfer_id=f"tx_same_sender_{i}",
+                    from_user=USER_ONE,
+                    to_user=USER_TWO,
+                    amount=transfer_amount,
+                    currency="USD",
+                    idempotency_key=f"idemp_same_sender_{i}"
+                )
+                await br.publish(
+                    message=request.model_dump(),
+                    topic=TRANSFER_REQUEST_TOPIC,
+                )
+
+            await asyncio.sleep(0.5)
+
+        total_transfered_money = transfer_amount * transfer_count
+        assert str(initial_balance_user_one - total_transfered_money) == await get_balance_user(mock_redis, USER_ONE)
+        assert str(initial_balance_user_two + total_transfered_money) == await get_balance_user(mock_redis, USER_TWO)
+
+
+    async def _wait_for_balance(self, redis, user, expected_str, timeout=3.0, poll=0.05):
+        """Poll redis until the user's balance equals expected_str or timeout."""
+        import time
+        start = time.monotonic()
+        while time.monotonic() - start < timeout:
+            current = await redis.hget(f"wallet:{user}", "balance")
+            if current == expected_str:
+                return True
+            await asyncio.sleep(poll)
+        return False
+
+
+    @pytest.mark.asyncio
+    async def test_bidirectional_transfer_real_publish(self, mock_wallet, mock_redis):
+        """
+        Publish two opposite-direction transfers to Kafka and ensure they are processed
+        without deadlock and balances update as expected.
+        """
+        await create_wallet(mock_redis, USER_ONE, "100.00")
+        await create_wallet(mock_redis, USER_TWO, "100.00")
+
+        a_to_b_amount = Decimal("50.00")
+        b_to_a_amount = Decimal("30.00")
+
+        expected_user1 = str(Decimal("100.00") - a_to_b_amount + b_to_a_amount)  # 80.00
+        expected_user2 = str(Decimal("100.00") + a_to_b_amount - b_to_a_amount)  # 120.00
+
+        async with TestKafkaBroker(kafka_broker) as br:
+            req1 = TransferRequested(
+                transfer_id="tx_a2b_real_1",
+                from_user=USER_ONE,
+                to_user=USER_TWO,
+                amount=a_to_b_amount,
+                currency="USD",
+                idempotency_key="idemp_a2b_real_1"
+            )
+
+            req2 = TransferRequested(
+                transfer_id="tx_b2a_real_1",
+                from_user=USER_TWO,
+                to_user=USER_ONE,
+                amount=b_to_a_amount,
+                currency="USD",
+                idempotency_key="idemp_b2a_real_1"
+            )
+
+            await asyncio.gather(
+                br.publish(message=req1.model_dump(), topic=TRANSFER_REQUEST_TOPIC),
+                br.publish(message=req2.model_dump(), topic=TRANSFER_REQUEST_TOPIC),
+            )
+
+
+        assert await get_balance_user(mock_redis, USER_ONE) == expected_user1
+        assert await get_balance_user(mock_redis, USER_TWO) == expected_user2
 
 
 #
