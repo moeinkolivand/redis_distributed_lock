@@ -73,8 +73,7 @@ async def get_redis() -> aioredis.Redis:
     """
     global redis_client
     if redis_client is None:
-        # TODO: Find A Way To Better Instanstiate Redis Client
-        return aioredis.from_url("redis://localhost:6379/0", decode_responses=True)
+        return aioredis.from_url("redis://localhost:6379/1", decode_responses=True)
     return redis_client
 
 
@@ -132,10 +131,6 @@ async def handle_transfer(
     - Serializes TransferCompleted response to JSON
     """
     try:
-        logger.info(
-            f"🔄 Processing transfer: {request.from_user} → {request.to_user} | "
-            f"Amount: {request.amount} {request.currency} | ID: {request.transfer_id}"
-        )
         success = await wallet.transfer(
             from_user=request.from_user,
             to_user=request.to_user,
@@ -151,10 +146,6 @@ async def handle_transfer(
             amount=request.amount,
             currency=request.currency
         )
-        from_user = await wallet.redis.hget(f"wallet:{request.from_user}", "balance")
-        to_user = await wallet.redis.hget(f"wallet:{request.to_user}", "balance")
-        status_emoji = "✅" if success else "❌"
-        logger.info(f"{status_emoji} Transfer {request.transfer_id}: {completion.status}")
 
         return completion
 
@@ -196,6 +187,6 @@ async def log_transfer_completion(event: TransferCompleted) -> None:
     - Trigger webhooks
     """
     logger.info(
-        f"📊 Transfer {event.transfer_id} completed with status: {event.status} | "
+        f"Transfer {event.transfer_id} completed with status: {event.status} | "
         f"{event.from_user} → {event.to_user} | {event.amount} {event.currency}"
     )
