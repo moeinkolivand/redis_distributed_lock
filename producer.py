@@ -184,13 +184,41 @@ async def request_transfer(
             str(e)
         )
 
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        try:
-            await broker.stop()
-            await redis_client.aclose()
-        except:
-            pass
+#
+# async def display_redis_data():
+#     try:
+#         logger.info("=" * 90)
+#         logger.info("REDIS DATA SNAPSHOT")
+#         logger.info("=" * 90)
+#
+#         user_ids = await get_all_user_ids()
+#
+#         if not user_ids:
+#             logger.warning("No users found in Redis")
+#             logger.info("=" * 90 + "\n")
+#             return
+#
+#         logger.info(f"Total Users: {len(user_ids)}\n")
+#         logger.info(f"{'User ID':<12} | {'Name':<25} | {'Balance':<12} | {'Currency':<8} | {'Status':<8}")
+#         logger.info("-" * 90)
+#
+#         for user_id in user_ids:
+#             user = await get_user_details(user_id)
+#             wallet = await get_wallet_details(user_id)
+#
+#             if user and wallet:
+#                 user_name = user.get('full_name', 'N/A')[:25]
+#                 balance = wallet.get('balance', '0')
+#                 currency = wallet.get('currency', 'USD')
+#                 status = wallet.get('status', 'N/A')
+#
+#                 logger.info(f"{user_id:<12} | {user_name:<25} | {balance:>10} | {currency:<8} | {status:<8}")
+#
+#         logger.info("=" * 90 + "\n")
+#
+#     except Exception as e:
+#         logger.error(f"Error displaying Redis data: {e}", exc_info=True)
+#
 
 # async def scenario_insufficient_balance_race():
 #     """
