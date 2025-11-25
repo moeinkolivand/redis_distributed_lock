@@ -301,7 +301,7 @@ This project accompanies my Medium articles:
 
 1. [The Story of WATCH and PIPELINE in Redis](https://medium.com/@moeinkolivand97/the-story-of-watch-and-pipeline-in-redis-3fd91d86fa7e)
 2. [Transaction in Redis](https://medium.com/@moeinkolivand97/transaction-in-redis-02a24bf25bac)
-3. **Building a Distributed Lock with Redis** (current article)
+3. [Distributed Lock In Redis](https://medium.com/@moeinkolivand97/race-condition-and-double-spending-in-money-transfer-systems-7b5547c5d0de)
 
 ## 🔥 Performance Notes
 
