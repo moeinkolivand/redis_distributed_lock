@@ -338,6 +338,6 @@ MIT License - feel free to use this for learning and production!
 
 ---
 
-**Questions?** Open an issue or reach out on [LinkedIn](https://www.linkedin.com/in/moeinkolivand)
+**Questions?** Open an issue or reach out on [LinkedIn](https://www.linkedin.com/in/moein-kolivand-425911124/)
 
 **Found this helpful?** ⭐ Star the repo!
