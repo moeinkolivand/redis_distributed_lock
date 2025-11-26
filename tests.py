@@ -324,126 +324,29 @@ class TestRaceConditions:
         assert await get_balance_user(mock_redis, USER_TWO) == expected_user2
 
 
-#
-# @pytest.mark.asyncio
-# async def test_handle_transfer_failure():
-#     """Test failed transfer handling through Kafka."""
-#     async with TestKafkaBroker(kafka_broker) as br:
-#         # Create mock wallet that fails
-#         mock_wallet = AsyncMock(spec=Wallet)
-#         mock_wallet.transfer.return_value = False
-#
-#         # Create transfer request
-#         request = TransferRequested(
-#             transfer_id="tx_fail_123",
-#             from_user="user_1",
-#             to_user="user_2",
-#             amount=Decimal("1000.00"),  # Insufficient
-#             currency="USD",
-#             idempotency_key="test_key_fail"
-#         )
-#
-#         # Publish and test
-#         response = await br.publish(
-#             request,
-#             topic=TRANSFER_REQUEST_TOPIC,
-#             callback=True
-#         )
-#
-#         # Verify response
-#         assert isinstance(response, TransferCompleted)
-#         assert response.status == "FAILED"
-#         assert response.transfer_id == "tx_fail_123"
-#
-#
-# class TestRaceConditions:
-#     """Test race condition scenarios."""
-#
-#     @pytest.mark.asyncio
-#     async def test_concurrent_transfers_same_sender(self, mock_wallet, mock_redis):
-#         """Test multiple concurrent transfers from same sender."""
-#         # Setup: user has $100
-#         initial_balance = Decimal("100.00")
-#         transfer_count = 5
-#         transfer_amount = Decimal("30.00")
-#
-#         # Mock balance checks
-#         balance_checks = []
-#         for i in range(transfer_count):
-#             remaining = initial_balance - (transfer_amount * i)
-#             balance_checks.extend([str(remaining), "1000.00"])  # from, to balances
-#
-#         mock_redis.hget.side_effect = balance_checks
-#         mock_redis.set.return_value = True
-#
-#         with patch('wallet.wallet_transfer.multi_lock') as mock_lock:
-#             mock_lock.return_value.__aenter__.return_value = ("token_123", ["user_1", "user_2"])
-#
-#             # Simulate concurrent transfers
-#             tasks = [
-#                 mock_wallet.transfer(
-#                     from_user="user_1",
-#                     to_user=f"user_{i + 2}",
-#                     amount=transfer_amount,
-#                     operation_id=f"op_{i}"
-#                 )
-#                 for i in range(transfer_count)
-#             ]
-#
-#             results = await asyncio.gather(*tasks)
-#
-#             # At most 3 should succeed (100/30 = 3.33)
-#             successful = sum(1 for r in results if r)
-#             assert successful <= 3
-#
-#     @pytest.mark.asyncio
-#     async def test_bidirectional_transfer_no_deadlock(self, mock_wallet, mock_redis):
-#         """Test bidirectional transfers don't deadlock."""
-#         mock_redis.hget.side_effect = [
-#             "100.00", "100.00",  # A->B balances
-#             "100.00", "100.00",  # B->A balances
-#         ]
-#         mock_redis.set.return_value = True
-#
-#         with patch('wallet.wallet_transfer.multi_lock') as mock_lock:
-#             # Both should acquire locks in same order due to sorting
-#             mock_lock.return_value.__aenter__.return_value = ("token", ["user_1", "user_2"])
-#
-#             # Simulate bidirectional transfers
-#             results = await asyncio.gather(
-#                 mock_wallet.transfer("user_1", "user_2", Decimal("50.00"), "op_1"),
-#                 mock_wallet.transfer("user_2", "user_1", Decimal("30.00"), "op_2"),
-#             )
-#
-#             # Both should complete (no deadlock)
-#             assert len(results) == 2
-#
-#
-# class TestIdempotency:
-#     """Test idempotency of operations."""
-#
-#     @pytest.mark.asyncio
-#     async def test_duplicate_transfer_request(self):
-#         """Test that duplicate requests with same idempotency key are handled."""
-#         async with TestKafkaBroker(kafka_broker) as br:
-#             request = TransferRequested(
-#                 transfer_id="tx_idem_123",
-#                 from_user="user_1",
-#                 to_user="user_2",
-#                 amount=Decimal("50.00"),
-#                 currency="USD",
-#                 idempotency_key="same_key"
-#             )
-#
-#             # Send same request twice
-#             response1 = await br.publish(request, topic=TRANSFER_REQUEST_TOPIC, callback=True)
-#             response2 = await br.publish(request, topic=TRANSFER_REQUEST_TOPIC, callback=True)
-#
-#             # Both should return responses (handled by locks)
-#             assert response1 is not None
-#             assert response2 is not None
-#
-#
+class TestIdempotency:
+    """Test idempotency of operations."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_transfer_request(self, mock_redis):
+        """Test that duplicate requests with same idempotency key are handled."""
+        initial_balance = await get_balance_user(mock_redis, USER_ONE)
+        amount = Decimal("50.00")
+        async with TestKafkaBroker(kafka_broker) as br:
+            request = TransferRequested(
+                transfer_id="tx_idem_123",
+                from_user=USER_ONE,
+                to_user=USER_TWO,
+                amount=amount,
+                currency="USD",
+                idempotency_key="tx_idem_123"
+            )
+
+            await br.publish(request.model_dump(), topic=TRANSFER_REQUEST_TOPIC)
+            await br.publish(request.model_dump(), topic=TRANSFER_REQUEST_TOPIC)
+
+        assert await get_balance_user(mock_redis, USER_ONE) == str(Decimal(initial_balance) - amount)
+
 # class TestLockBehavior:
 #     """Test distributed lock behavior."""
 #
